@@ -137,7 +137,7 @@
             # 2. tools/osx_packaging/osx_build の実行
             pushd tools/osx_packaging
             patchShebangs osx_build
-            ./osx_build
+            ./osx_build --public
             popd
 
             # 3. 成果物 Ardour9.app の配置
