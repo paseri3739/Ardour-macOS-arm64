@@ -69,9 +69,13 @@
             repo = "ardour";
             rev = "9.2";
             fetchSubmodules = true;
-            # 実際のハッシュ値に書き換えてください（前回成功していればそのままで構いません）
-            hash = "sha256-zbEfEuWdhlKtYE0gVB/N0dFrcmNoJqgEMuvQ0wdmRpM="; # 例：適宜修正
+            hash = "sha256-zbEfEuWdhlKtYE0gVB/N0dFrcmNoJqgEMuvQ0wdmRpM=";
           };
+
+          # 作成したパッチファイルを適用
+          patches = [
+            ./arm64-fix.patch
+          ];
 
           nativeBuildInputs = with pkgs; [
             pkg-config
@@ -87,16 +91,15 @@
           CFLAGS = "-DDISABLE_VISIBILITY";
           CXXFLAGS = "-DDISABLE_VISIBILITY";
 
-          # バージョン取得ロジックの無効化とリビジョンファイルの生成
           postPatch = ''
-            # wscriptのバージョン取得関数を上書きしてIndexErrorを回避
+            # リビジョン情報の静的生成
+            mkdir -p libs/ardour
+            printf '#include "ardour/revision.h"\nnamespace ARDOUR { const char* revision = "9.2"; }\n' > libs/ardour/revision.cc
+
+            # バージョン取得ロジックの回避
             substituteInPlace wscript \
               --replace "rev, rev_date = fetch_tarball_revision_date()" "rev, rev_date = '9.2', '2026-03-10'" \
               --replace "rev, rev_date = fetch_git_revision_date()" "rev, rev_date = '9.2', '2026-03-10'"
-
-            # リビジョンファイルの作成
-            mkdir -p libs/ardour
-            printf '#include "ardour/revision.h"\nnamespace ARDOUR { const char* revision = "9.2"; }\n' > libs/ardour/revision.cc
 
             chmod +x waf
           '';
@@ -128,24 +131,21 @@
           installPhase = ''
             runHook preInstall
 
+            # 1. ビルド済みファイルのインストール
             python3 ./waf install
 
-            # macOS用パッケージング
+            # 2. tools/osx_packaging/osx_build の実行
             pushd tools/osx_packaging
             patchShebangs osx_build
-
-            # 注: osx_buildが内部でシステムのXcodeツールに依存している場合、
-            # サンドボックス内で実行するために環境変数の調整が必要になることがあります
             ./osx_build
             popd
 
-            # 成果物の配置
+            # 3. 成果物 Ardour9.app の配置
             mkdir -p $out/Applications
             if [ -d "tools/osx_packaging/Ardour/Ardour9.app" ]; then
               cp -r tools/osx_packaging/Ardour/Ardour9.app $out/Applications/
             else
-              echo "Error: Ardour9.app not found. Content of tools/osx_packaging/Ardour:"
-              ls -la tools/osx_packaging/Ardour || true
+              echo "Error: Resulting Ardour9.app not found in expected path."
               exit 1
             fi
 
