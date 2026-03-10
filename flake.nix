@@ -72,7 +72,6 @@
             hash = "sha256-zbEfEuWdhlKtYE0gVB/N0dFrcmNoJqgEMuvQ0wdmRpM=";
           };
 
-          # 作成したパッチファイルを適用
           patches = [
             ./arm64-fix.patch
           ];
@@ -131,23 +130,9 @@
           installPhase = ''
             runHook preInstall
 
-            # 1. ビルド済みファイルのインストール
+            # Wafによる標準的なインストールを実行
+            # これにより $out/bin, $out/lib, $out/share 配下に成果物が配置されます
             python3 ./waf install
-
-            # 2. tools/osx_packaging/osx_build の実行
-            pushd tools/osx_packaging
-            patchShebangs osx_build
-            ./osx_build --public
-            popd
-
-            # 3. 成果物 Ardour9.app の配置
-            mkdir -p $out/Applications
-            if [ -d "tools/osx_packaging/Ardour/Ardour9.app" ]; then
-              cp -r tools/osx_packaging/Ardour/Ardour9.app $out/Applications/
-            else
-              echo "Error: Resulting Ardour9.app not found in expected path."
-              exit 1
-            fi
 
             runHook postInstall
           '';
