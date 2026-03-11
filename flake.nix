@@ -134,6 +134,39 @@
             # これにより $out/bin, $out/lib, $out/share 配下に成果物が配置されます
             python3 ./waf install
 
+            ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+              ardourLib="$out/lib/ardour9"
+              buildPrefix="/source/build/libs/"
+
+              if [ -d "$ardourLib" ]; then
+                while IFS= read -r -d "" macho; do
+                  if ! file -b "$macho" | grep -q "Mach-O"; then
+                    continue
+                  fi
+
+                  case "$macho" in
+                    *.dylib)
+                      install_name_tool -id "$macho" "$macho"
+                      ;;
+                  esac
+
+                  while IFS= read -r dep; do
+                    case "$dep" in
+                      *"$buildPrefix"*)
+                        depBase="$(basename "$dep")"
+                        target="$(find -L "$ardourLib" -name "$depBase" | head -n 1)"
+                        if [ -n "$target" ]; then
+                          install_name_tool -change "$dep" "$target" "$macho"
+                        else
+                          echo "warning: no installed Mach-O match for $dep in $macho" >&2
+                        fi
+                        ;;
+                    esac
+                  done < <(otool -L "$macho" | tail -n +2 | awk '{print $1}')
+                done < <(find "$ardourLib" -type f \( -perm -111 -o -name "*.dylib" \) -print0)
+              fi
+            ''}
+
             runHook postInstall
           '';
         };
