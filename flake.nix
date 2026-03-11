@@ -62,7 +62,7 @@
             pkgs.apple-sdk
           ];
 
-        ardour-package = pkgs.stdenv.mkDerivation {
+        ardour-base = pkgs.stdenv.mkDerivation {
           pname = "ardour";
           version = "9.2";
 
@@ -133,9 +133,29 @@
             # Wafによる標準的なインストールを実行
             # これにより $out/bin, $out/lib, $out/share 配下に成果物が配置されます
             python3 ./waf install
+            runHook postInstall
+          '';
+        };
+
+        ardour-package = pkgs.stdenvNoCC.mkDerivation {
+          pname = "ardour";
+          version = "9.2";
+
+          dontUnpack = true;
+          dontPatchShebangs = true;
+          nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.darwin.cctools
+          ];
+
+          installPhase = ''
+            runHook preInstall
+
+            cp -a ${ardour-base}/. "$out/"
+            chmod -R u+w "$out"
 
             ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
               ardourLib="$out/lib/ardour9"
+              baseRoot="${ardour-base}"
               buildPrefix="/source/build/libs/"
 
               if [ -d "$ardourLib" ]; then
@@ -152,6 +172,9 @@
 
                   while IFS= read -r dep; do
                     case "$dep" in
+                      "$baseRoot"/*)
+                        install_name_tool -change "$dep" "$out/''${dep#"$baseRoot"/}" "$macho"
+                        ;;
                       *"$buildPrefix"*)
                         depBase="$(basename "$dep")"
                         target="$(find -L "$ardourLib" -name "$depBase" | head -n 1)"
@@ -167,12 +190,65 @@
               fi
             ''}
 
+            for script in \
+              "$out/bin/ardour9" \
+              "$out/bin/ardour9-lua" \
+              "$out/bin/ardour9-export" \
+              "$out/bin/ardour9-new_session" \
+              "$out/bin/ardour9-new_empty_session" \
+              "$out/lib/ardour9/utils/ardour-util.sh"
+            do
+              [ -f "$script" ] || continue
+
+              substituteInPlace "$script" \
+                --replace "${ardour-base}/share/ardour9" '$_ardour_root/share/ardour9' \
+                --replace "${ardour-base}/etc/ardour9" '$_ardour_root/etc/ardour9' \
+                --replace "${ardour-base}/lib/ardour9/vamp" '$_ardour_root/lib/ardour9/vamp' \
+                --replace "${ardour-base}/lib/ardour9/utils/" '$_ardour_root/lib/ardour9/utils/' \
+                --replace "${ardour-base}/lib/ardour9/luasession" '$_ardour_root/lib/ardour9/luasession' \
+                --replace "${ardour-base}/lib/ardour9/ardour-9.2.0" '$_ardour_root/lib/ardour9/ardour-9.2.0' \
+                --replace "${ardour-base}/lib/ardour9" '$_ardour_root/lib/ardour9'
+            done
+
+            for script in \
+              "$out/bin/ardour9" \
+              "$out/bin/ardour9-lua" \
+              "$out/bin/ardour9-export" \
+              "$out/bin/ardour9-new_session" \
+              "$out/bin/ardour9-new_empty_session"
+            do
+              [ -f "$script" ] || continue
+
+              tmp="$TMPDIR/$(basename "$script").wrapped"
+              {
+                printf '%s\n' '#!/bin/sh'
+                printf '%s\n' '_script_dir="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"'
+                printf '%s\n' '_ardour_root="$(CDPATH= cd -- "$_script_dir/.." && pwd)"'
+                sed '1d' "$script"
+              } > "$tmp"
+              mv "$tmp" "$script"
+              chmod +x "$script"
+            done
+
+            if [ -f "$out/lib/ardour9/utils/ardour-util.sh" ]; then
+              tmp="$TMPDIR/ardour-util.sh.wrapped"
+              {
+                printf '%s\n' '#!/bin/sh'
+                printf '%s\n' '_script_dir="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"'
+                printf '%s\n' '_ardour_root="$(CDPATH= cd -- "$_script_dir/../../.." && pwd)"'
+                sed '1d' "$out/lib/ardour9/utils/ardour-util.sh"
+              } > "$tmp"
+              mv "$tmp" "$out/lib/ardour9/utils/ardour-util.sh"
+              chmod +x "$out/lib/ardour9/utils/ardour-util.sh"
+            fi
+
             runHook postInstall
           '';
         };
       in
       {
         packages.default = ardour-package;
+        packages.base = ardour-base;
 
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
