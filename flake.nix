@@ -20,6 +20,7 @@
         # for macos, we need to use the custom versions of aubio and vamp plugins
         aubio-custom = pkgs.callPackage ./aubio.nix { };
         vamp-custom = pkgs.callPackage ./vamp.nix { };
+        curl-custom = pkgs.curlMinimal;
 
         libraries =
           with pkgs;
@@ -28,7 +29,7 @@
             glib
             glibmm
             libsndfile
-            curl
+            curl-custom
             libarchive
             liblo
             taglib
