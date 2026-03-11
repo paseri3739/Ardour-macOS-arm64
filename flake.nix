@@ -80,6 +80,7 @@
 
           nativeBuildInputs = with pkgs; [
             pkg-config
+            perl
             python311
           ];
 
@@ -143,6 +144,7 @@
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
             pkg-config
+            perl
             python311
           ];
           buildInputs = libraries;
