@@ -1,5 +1,5 @@
 {
-  description = "Ardour 9.2 dependencies and build environment";
+  description = "Ardour dependencies and build environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -17,6 +17,7 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
+        # for macos, we need to use the custom versions of aubio and vamp plugins
         aubio-custom = pkgs.callPackage ./aubio.nix { };
         vamp-custom = pkgs.callPackage ./vamp.nix { };
 
@@ -80,14 +81,11 @@
           nativeBuildInputs = with pkgs; [
             pkg-config
             python311
-            perl
-            gettext
-            itstool
-            makeWrapper
           ];
 
           buildInputs = libraries;
 
+          # macOS needs these flags to disable symbol visibility
           CFLAGS = "-DDISABLE_VISIBILITY";
           CXXFLAGS = "-DDISABLE_VISIBILITY";
 
@@ -118,7 +116,7 @@
               --libjack=weak \
               --optimize \
               --keepflags
-            runHook postConfigure
+              runHook postConfigure
           '';
 
           buildPhase = ''
@@ -148,6 +146,7 @@
             python311
           ];
           buildInputs = libraries;
+          # This is needed for the build system to find sratom's headers and libraries
           shellHook = ''
             export NIX_CFLAGS_COMPILE="$(pkg-config --cflags sratom-0) $NIX_CFLAGS_COMPILE"
           '';
