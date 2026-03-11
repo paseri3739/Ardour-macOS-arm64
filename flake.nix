@@ -143,9 +143,13 @@
 
           dontUnpack = true;
           dontPatchShebangs = true;
-          nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.darwin.cctools
-          ];
+          nativeBuildInputs =
+            pkgs.lib.optionals pkgs.stdenv.isDarwin [
+              pkgs.darwin.cctools
+            ]
+            ++ [
+              pkgs.python311
+            ];
 
           installPhase = ''
             runHook preInstall
@@ -164,27 +168,36 @@
                     continue
                   fi
 
+                  machoDir="$(dirname "$macho")"
+
                   case "$macho" in
                     *.dylib)
-                      install_name_tool -id "$macho" "$macho"
+                      install_name_tool -id "@loader_path/$(basename "$macho")" "$macho"
                       ;;
                   esac
 
                   while IFS= read -r dep; do
+                    target=""
+
                     case "$dep" in
                       "$baseRoot"/*)
-                        install_name_tool -change "$dep" "$out/''${dep#"$baseRoot"/}" "$macho"
+                        target="$out/''${dep#"$baseRoot"/}"
+                        ;;
+                      "$out"/*)
+                        target="$dep"
                         ;;
                       *"$buildPrefix"*)
                         depBase="$(basename "$dep")"
                         target="$(find -L "$ardourLib" -name "$depBase" | head -n 1)"
-                        if [ -n "$target" ]; then
-                          install_name_tool -change "$dep" "$target" "$macho"
-                        else
-                          echo "warning: no installed Mach-O match for $dep in $macho" >&2
-                        fi
                         ;;
                     esac
+
+                    if [ -n "$target" ]; then
+                      relTarget="$(python3 -c 'import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$target" "$machoDir")"
+                      install_name_tool -change "$dep" "@loader_path/$relTarget" "$macho"
+                    elif [ "''${dep#"$baseRoot"/}" != "$dep" ] || [ "''${dep#"$buildPrefix"}" != "$dep" ]; then
+                      echo "warning: no installed Mach-O match for $dep in $macho" >&2
+                    fi
                   done < <(otool -L "$macho" | tail -n +2 | awk '{print $1}')
                 done < <(find "$ardourLib" -type f \( -perm -111 -o -name "*.dylib" \) -print0)
               fi
