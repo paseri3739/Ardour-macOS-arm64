@@ -1,7 +1,8 @@
 # Ardour 9.2 for macOS arm64 with Nix
 
-This repository contains a Nix flake that builds Ardour 9.2 on macOS arm64 and
-then repackages the install tree into a relocatable Nix output.
+This repository contains a Nix flake that builds Ardour 9.2 on macOS arm64,
+repackages the install tree into a relocatable Nix runtime, and then assembles
+an `Ardour9.app` bundle from that staged output.
 
 The flake started as a straightforward nixpkgs-based build, but several rounds
 of comparison against the official macOS bundle showed that Ardour's packaging
@@ -12,7 +13,7 @@ explicit where they matter for runtime behavior and bundle parity.
 
 - `nix build` succeeds on macOS arm64.
 - The resulting `result/bin/ardour9` launches successfully.
-- The output is a relocatable Nix install tree, not a `.app` bundle.
+- The resulting `result/Ardour9.app` can be opened with `open`.
 - The LV2 core/spec bundles and bundled media that were previously missing are
   now included.
 
@@ -33,7 +34,7 @@ explicit where they matter for runtime behavior and bundle parity.
 
 ## How the flake is structured
 
-The flake builds Ardour in two stages.
+The flake builds Ardour in three stages.
 
 ### 1. `ardour-base`
 
@@ -82,6 +83,43 @@ It does the following:
 
 This second stage exists because `waf install` alone does not produce a
 standalone macOS bundle or a self-contained Nix-style runtime tree.
+
+### 3. `ardour-app`
+
+`ardour-app` is a second `stdenvNoCC.mkDerivation` that assembles a macOS app
+bundle from `ardour-package`.
+
+It does the following:
+
+- Creates `Applications/Ardour9.app/Contents`.
+- Flattens `lib/ardour9` into `Contents/lib` so the app layout is closer to the
+  official macOS bundle.
+- Copies `share/ardour9` and `etc/ardour9` into `Contents/Resources`.
+- Adds macOS packaging assets from `tools/osx_packaging` in the Ardour source:
+  - `Info.plist.in`
+  - `InfoPlist.strings.in`
+  - `Resources/fonts.conf`
+  - `Ardour.icns`
+  - `typeArdour.icns`
+- Copies the Ardour GUI binary into `Contents/MacOS/Ardour9`.
+- Rewrites the copied executable so its Mach-O references point at
+  `@executable_path/../lib/...`, matching app-bundle layout.
+- Creates top-level app helper executables in `Contents/lib` for:
+  - `ardour9-export`
+  - `ardour9-lua`
+  - `ardour9-new_session`
+  - `ardour9-new_empty_session`
+- Creates `Contents/MacOS` shell wrappers for the helper tools, following the
+  official bundle pattern.
+- Generates `Info.plist` from Ardour's upstream template and sets:
+  - `CFBundleExecutable = Ardour9`
+  - `CFBundleIdentifier = org.ardour.Ardour9`
+  - `LSEnvironment` with `PATH`, `DYLIB_FALLBACK_LIBRARY_PATH`, and
+    `ARDOUR_BUNDLED=true`
+
+This third stage exists because the working Nix runtime tree is not yet an app
+bundle, and the main GUI executable must be copied into `Contents/MacOS` with
+its load commands rewritten for Finder-style launch.
 
 ## Dependency selection
 
@@ -208,7 +246,8 @@ produced by Ardour itself.
 In the flake, this is reproduced by:
 
 - building the Ardour-pinned `lv2` package
-- copying its `lib/lv2/*.lv2/*.ttl` into `lib/ardour9/LV2`
+- copying its `lib/lv2/*.lv2/*.ttl` into the staged runtime tree
+- carrying those bundles into `Contents/lib/LV2` during app assembly
 
 Without this step, the output was missing `schemas.lv2` and other core LV2
 metadata that the official bundle contained.
@@ -248,11 +287,14 @@ nixpkgs-only build, but it is not identical.
 
 Remaining known differences:
 
-- no `.app` bundle is produced yet
 - no code signing or notarization
 - `vamp` naming still differs from the comparison bundle
 - external optional content such as `harvid`, `Harrison.lv2`, and similar
   packaging additions are still not reproduced
+- the app uses a partially officialized layout:
+  - `Contents/lib` is flattened like the official bundle
+  - but some packaging details such as `bundled/` and extra helper remnants are
+    still carried over from the staged runtime tree
 
 These were intentionally deferred because they are less critical than:
 
@@ -315,6 +357,14 @@ This is now also encoded in the flake.
 nix build
 ```
 
+This builds the app bundle by default.
+
+If you want the intermediate staged runtime tree instead:
+
+```bash
+nix build .#tree
+```
+
 ### Development shell
 
 ```bash
@@ -325,24 +375,27 @@ nix develop
 
 Important parts of the result are:
 
-- `result/bin/ardour9`
-  Launcher wrapper.
-- `result/lib/ardour9`
-  Main libraries, scanners, plugins, and helper binaries.
-- `result/lib/ardour9/bundled`
-  Copied runtime dylibs from `/nix/store`.
-- `result/lib/ardour9/LV2`
+- `result/Ardour9.app`
+  Convenience symlink to the app bundle inside the Nix output.
+- `result/Ardour9.app/Contents/MacOS/Ardour9`
+  Main GUI executable.
+- `result/Ardour9.app/Contents/lib`
+  Main libraries, scanners, plugins, helper executables, and bundled dylibs.
+- `result/Ardour9.app/Contents/lib/LV2`
   Ardour LV2 plugins plus the external LV2 spec/core TTL bundles.
-- `result/share/ardour9/media`
+- `result/Ardour9.app/Contents/Resources`
+  Ardour data/config resources plus macOS packaging assets.
+- `result/Ardour9.app/Contents/Resources/media`
   Repo media plus `ArdourBundledMedia.zip` content.
 
 ## If you want to go further
 
 The next likely steps are:
 
-- generate a proper `Ardour9.app`
 - decide whether to normalize `vamp` dylib names to match the official bundle
 - decide whether `harvid`, `Harrison.lv2`, and other external packaging
   additions should be reproduced
+- decide whether to flatten the remaining `bundled/` and helper layout
+  differences inside `Contents/lib`
 - add signing/notarization outside of the Nix build if release-grade macOS
   distribution is required

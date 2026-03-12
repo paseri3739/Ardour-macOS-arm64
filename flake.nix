@@ -16,6 +16,16 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        ardourVersion = "9.2";
+        releaseVersion = "9.2.0";
+        bundleName = "Ardour9";
+        ardourSource = pkgs.fetchFromGitHub {
+          owner = "Ardour";
+          repo = "ardour";
+          rev = ardourVersion;
+          fetchSubmodules = true;
+          hash = "sha256-zbEfEuWdhlKtYE0gVB/N0dFrcmNoJqgEMuvQ0wdmRpM=";
+        };
 
         # for macos, we need to use the custom versions of aubio and vamp plugins
         aubio-custom = pkgs.callPackage ./aubio.nix { };
@@ -71,15 +81,9 @@
 
         ardour-base = pkgs.stdenv.mkDerivation {
           pname = "ardour";
-          version = "9.2";
+          version = ardourVersion;
 
-          src = pkgs.fetchFromGitHub {
-            owner = "Ardour";
-            repo = "ardour";
-            rev = "9.2";
-            fetchSubmodules = true;
-            hash = "sha256-zbEfEuWdhlKtYE0gVB/N0dFrcmNoJqgEMuvQ0wdmRpM=";
-          };
+          src = ardourSource;
 
           patches = [
             ./arm64-fix.patch
@@ -100,12 +104,12 @@
           postPatch = ''
             # リビジョン情報の静的生成
             mkdir -p libs/ardour
-            printf '#include "ardour/revision.h"\nnamespace ARDOUR { const char* revision = "9.2"; }\n' > libs/ardour/revision.cc
+            printf '#include "ardour/revision.h"\nnamespace ARDOUR { const char* revision = "${ardourVersion}"; }\n' > libs/ardour/revision.cc
 
             # バージョン取得ロジックの回避
             substituteInPlace wscript \
-              --replace "rev, rev_date = fetch_tarball_revision_date()" "rev, rev_date = '9.2', '2026-03-10'" \
-              --replace "rev, rev_date = fetch_git_revision_date()" "rev, rev_date = '9.2', '2026-03-10'"
+              --replace "rev, rev_date = fetch_tarball_revision_date()" "rev, rev_date = '${ardourVersion}', '2026-03-10'" \
+              --replace "rev, rev_date = fetch_git_revision_date()" "rev, rev_date = '${ardourVersion}', '2026-03-10'"
 
             chmod +x waf
           '';
@@ -146,7 +150,7 @@
 
         ardour-package = pkgs.stdenvNoCC.mkDerivation {
           pname = "ardour";
-          version = "9.2";
+          version = ardourVersion;
 
           dontUnpack = true;
           dontPatchShebangs = true;
@@ -356,9 +360,163 @@ PY
             runHook postInstall
           '';
         };
+
+        ardour-app = pkgs.stdenvNoCC.mkDerivation {
+          pname = "ardour-app";
+          version = ardourVersion;
+
+          dontUnpack = true;
+          dontPatchShebangs = true;
+          nativeBuildInputs =
+            pkgs.lib.optionals pkgs.stdenv.isDarwin [
+              pkgs.darwin.cctools
+            ]
+            ++ [
+              pkgs.python311
+            ];
+
+          installPhase = ''
+            runHook preInstall
+
+            if [ "${if pkgs.stdenv.isDarwin then "1" else "0"}" != 1 ]; then
+              mkdir -p "$out"
+              cp -a ${ardour-package}/. "$out/"
+              runHook postInstall
+              exit 0
+            fi
+
+            appDir="$out/${bundleName}.app"
+            appRoot="$appDir/Contents"
+            resourcesDir="$appRoot/Resources"
+            libDir="$appRoot/lib"
+            macosDir="$appRoot/MacOS"
+            lv2Dir="$libDir/LV2"
+
+            mkdir -p "$resourcesDir" "$libDir" "$macosDir" "$lv2Dir"
+
+            cp -a ${ardour-package}/lib/ardour9/. "$libDir/"
+            chmod -R u+w "$libDir"
+
+            while IFS= read -r -d "" entry; do
+              cp -a "$entry" "$resourcesDir/"
+            done < <(find ${ardour-package}/share/ardour9 -mindepth 1 -maxdepth 1 -print0)
+
+            while IFS= read -r -d "" entry; do
+              cp -a "$entry" "$resourcesDir/"
+            done < <(find ${ardour-package}/etc/ardour9 -mindepth 1 -maxdepth 1 -print0)
+            chmod -R u+w "$resourcesDir"
+
+            cp ${ardourSource}/tools/osx_packaging/Resources/fonts.conf "$resourcesDir/fonts.conf"
+            cp ${ardourSource}/tools/osx_packaging/Ardour.icns "$resourcesDir/appIcon.icns"
+            cp ${ardourSource}/tools/osx_packaging/typeArdour.icns "$resourcesDir/typeArdour.icns"
+            ln -s typeArdour.icns "$resourcesDir/typeIcon.icns"
+
+            if [ -d ${pkgs.lrdf}/share/ladspa/rdf ]; then
+              mkdir -p "$resourcesDir/rdf"
+              cp -a ${pkgs.lrdf}/share/ladspa/rdf/. "$resourcesDir/rdf/"
+            else
+              mkdir -p "$resourcesDir/rdf"
+              touch "$resourcesDir/rdf/.stub"
+            fi
+
+            export resourcesDir libDir macosDir
+
+            python3 <<'PY'
+import os
+import subprocess
+from pathlib import Path
+
+
+def macho_deps(path: Path) -> list[str]:
+    out = subprocess.check_output(["otool", "-L", str(path)], text=True)
+    deps = []
+    for line in out.splitlines()[1:]:
+        line = line.strip()
+        if line:
+            deps.append(line.split(" ", 1)[0])
+    return deps
+
+
+def patch_executable(path: Path) -> None:
+    for dep in macho_deps(path):
+        if dep.startswith("@loader_path/../"):
+            new_dep = "@executable_path/../lib/" + dep[len("@loader_path/../") :]
+        elif dep.startswith("@loader_path/"):
+            new_dep = "@executable_path/../lib/" + dep[len("@loader_path/") :]
+        else:
+            continue
+        subprocess.check_call(["install_name_tool", "-change", dep, new_dep, str(path)])
+
+
+lib_dir = Path(os.environ["libDir"])
+macos_dir = Path(os.environ["macosDir"])
+
+main_executable = macos_dir / "${bundleName}"
+main_executable.write_bytes((lib_dir / "ardour-${releaseVersion}").read_bytes())
+main_executable.chmod(0o755)
+patch_executable(main_executable)
+
+for name in ("ardour9-export", "ardour9-new_session", "ardour9-new_empty_session"):
+    target = lib_dir / name
+    target.write_bytes((lib_dir / "utils" / name).read_bytes())
+    target.chmod(0o755)
+    patch_executable(target)
+
+lua_target = lib_dir / "ardour9-lua"
+lua_target.write_bytes((lib_dir / "luasession").read_bytes())
+lua_target.chmod(0o755)
+patch_executable(lua_target)
+PY
+
+            cat > "$macosDir/ardour9-export" <<'EOF'
+#!/bin/sh
+
+BIN_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+BUNDLE_DIR=$(dirname "$BIN_DIR")
+
+export ARDOUR_DATA_PATH="$BUNDLE_DIR/Resources"
+export ARDOUR_CONFIG_PATH="$BUNDLE_DIR/Resources"
+export ARDOUR_DLL_PATH="$BUNDLE_DIR/lib"
+export VAMP_PATH="$BUNDLE_DIR/lib/vamp''${VAMP_PATH:+:$VAMP_PATH}"
+
+SELF=$(basename "$0")
+exec "$BUNDLE_DIR/lib/$SELF" "$@"
+EOF
+
+            cp "$macosDir/ardour9-export" "$macosDir/ardour9-lua"
+            cp "$macosDir/ardour9-export" "$macosDir/ardour9-new_session"
+            cp "$macosDir/ardour9-export" "$macosDir/ardour9-new_empty_session"
+            chmod +x \
+              "$macosDir/ardour9-export" \
+              "$macosDir/ardour9-lua" \
+              "$macosDir/ardour9-new_session" \
+              "$macosDir/ardour9-new_empty_session"
+
+            env='<key>LSEnvironment</key><dict><key>PATH</key><string>/usr/local/bin:/opt/bin:/usr/bin:/bin:/usr/sbin:/sbin</string><key>DYLIB_FALLBACK_LIBRARY_PATH</key><string>/usr/local/lib:/opt/lib</string><key>ARDOUR_BUNDLED</key><string>true</string></dict>'
+            infoString='${releaseVersion} built with Nix on ${system}'
+            sed \
+              -e "s?@ENV@?$env?g" \
+              -e "s?@VERSION@?${releaseVersion}?g" \
+              -e "s?@INFOSTRING@?$infoString?g" \
+              -e "s?@IDBASE@?org.ardour?g" \
+              -e "s?@IDSUFFIX@?${bundleName}?g" \
+              -e "s?@BUNDLENAME@?${bundleName}?g" \
+              -e "s?@EXECUTABLE@?${bundleName}?g" \
+              ${ardourSource}/tools/osx_packaging/Info.plist.in > "$appRoot/Info.plist"
+
+            sed \
+              -e "s?@APPNAME@?${bundleName}?g" \
+              -e "s?@VERSION@?${releaseVersion}?g" \
+              ${ardourSource}/tools/osx_packaging/InfoPlist.strings.in > "$resourcesDir/InfoPlist.strings"
+
+            runHook postInstall
+          '';
+        };
       in
       {
-        packages.default = ardour-package;
+        packages.default = ardour-app;
+        packages.app = ardour-app;
+        packages.tree = ardour-package;
         packages.base = ardour-base;
 
         devShells.default = pkgs.mkShell {
