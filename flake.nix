@@ -34,6 +34,14 @@
           url = "http://stuff.ardour.org/loops/ArdourBundledMedia.zip";
           hash = "sha256-oA3gBnHNwymyyjXCpcQVCvPWWIFH+dyi496nUqouI0w=";
         };
+        harrisonLv2Bundle =
+          if system == "aarch64-darwin" then
+            pkgs.fetchurl {
+              url = "https://builder.harrisonconsoles.com/pub/dsp/harrison_lv2s-n.macarm64.zip";
+              hash = "sha256-yukIrqQOoN/1AhwX20kHp3blTuehmGxiGT+GGOkoCC4=";
+            }
+          else
+            null;
         libwebsocketsCustom = pkgs.callPackage ./libwebsockets.nix { };
         vamp-custom = pkgs.callPackage ./vamp.nix { };
         curl-custom = pkgs.curlMinimal;
@@ -304,6 +312,12 @@ PY
                 cp "$ttl" "$installDir/"
               done < <(find ${ardourLv2Stack.lv2}/lib/lv2 -mindepth 2 -maxdepth 2 -type f -name "*.ttl" -print0)
             fi
+
+            ${pkgs.lib.optionalString (harrisonLv2Bundle != null) ''
+              if [ -d "$out/lib/ardour9/LV2" ]; then
+                unzip -oq ${harrisonLv2Bundle} -d "$out/lib/ardour9/LV2"
+              fi
+            ''}
 
             for script in \
               "$out/bin/ardour9" \
