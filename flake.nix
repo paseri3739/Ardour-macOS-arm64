@@ -453,7 +453,8 @@ PY
 
             appDir="$out/${bundleName}.app"
             appRoot="$appDir/Contents"
-            resourcesDir="$appRoot/Resources"
+            finalResourcesDir="$appRoot/Resources"
+            resourcesDir="$(mktemp -d)"
             libDir="$appRoot/lib"
             macosDir="$appRoot/MacOS"
             lv2Dir="$libDir/LV2"
@@ -491,13 +492,59 @@ PY
             fi
 
             while IFS= read -r -d "" entry; do
-              cp -a "$entry" "$resourcesDir/"
+              if [ "$(basename "$entry")" = "locale" ]; then
+                continue
+              fi
+              cp -R "$entry" "$resourcesDir/"
             done < <(find ${ardour-package}/share/ardour9 -mindepth 1 -maxdepth 1 -print0)
 
             while IFS= read -r -d "" entry; do
-              cp -a "$entry" "$resourcesDir/"
+              cp -R "$entry" "$resourcesDir/"
             done < <(find ${ardour-package}/etc/ardour9 -mindepth 1 -maxdepth 1 -print0)
             chmod -R u+w "$resourcesDir"
+
+            if [ -d ${ardour-package}/share/ardour9/locale ]; then
+              while IFS= read -r -d "" moFile; do
+                relPath="''${moFile#${ardour-package}/share/ardour9/locale/}"
+                mkdir -p "$resourcesDir/locale/$(dirname "''${relPath}")"
+                install -m 0644 "$moFile" "$resourcesDir/locale/''${relPath}"
+              done < <(find ${ardour-package}/share/ardour9/locale -type f -print0)
+            fi
+
+            if [ -d "$resourcesDir/locale" ]; then
+              glibLocaleRoot="${pkgs.glib.out}/share/locale"
+              gettextLocaleRoot="${pkgs.gettext}/share/locale"
+
+              while IFS= read -r -d "" lcDir; do
+                lang="$(basename "$(dirname "$lcDir")")"
+
+                if ! find "$lcDir" -maxdepth 1 -type f ! -name 'libytk9.mo' | grep -q .; then
+                  continue
+                fi
+
+                sourceLang="$lang"
+                if [ ! -d "$glibLocaleRoot/$sourceLang" ] && [ ! -d "$gettextLocaleRoot/$sourceLang" ]; then
+                  fallbackLang="$(printf '%s\n' "$lang" | sed 's/_[A-Z][A-Z]$//')"
+                  if [ "$fallbackLang" != "$lang" ] && { [ -d "$glibLocaleRoot/$fallbackLang" ] || [ -d "$gettextLocaleRoot/$fallbackLang" ]; }; then
+                    sourceLang="$fallbackLang"
+                  fi
+                fi
+
+                targetLocaleDir="$resourcesDir/locale/$sourceLang/LC_MESSAGES"
+                mkdir -p "$targetLocaleDir"
+                chmod u+w "$resourcesDir/locale" "$resourcesDir/locale/$sourceLang" "$targetLocaleDir" || true
+
+                for mo in gettext-runtime.mo gettext-tools.mo; do
+                  if [ -f "$gettextLocaleRoot/$sourceLang/LC_MESSAGES/$mo" ]; then
+                    install -m 0644 "$gettextLocaleRoot/$sourceLang/LC_MESSAGES/$mo" "$targetLocaleDir/$mo"
+                  fi
+                done
+
+                if [ -f "$glibLocaleRoot/$sourceLang/LC_MESSAGES/glib20.mo" ]; then
+                  install -m 0644 "$glibLocaleRoot/$sourceLang/LC_MESSAGES/glib20.mo" "$targetLocaleDir/glib20.mo"
+                fi
+              done < <(find "$resourcesDir/locale" -mindepth 2 -maxdepth 2 -type d -name LC_MESSAGES -print0)
+            fi
 
             mkdir -p "$resourcesDir/icons"
             cp -a ${ardourSource}/gtk2_ardour/icons/cursor_square "$resourcesDir/icons/"
@@ -606,6 +653,9 @@ EOF
               -e "s?@APPNAME@?${bundleName}?g" \
               -e "s?@VERSION@?${releaseVersion}?g" \
               ${ardourSource}/tools/osx_packaging/InfoPlist.strings.in > "$resourcesDir/InfoPlist.strings"
+
+            mkdir -p "$finalResourcesDir"
+            cp -R "$resourcesDir/." "$finalResourcesDir/"
 
             runHook postInstall
           '';

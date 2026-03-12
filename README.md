@@ -15,8 +15,9 @@ explicit where they matter for runtime behavior and bundle parity.
 - The resulting `result/bin/ardour9` launches successfully.
 - The resulting `result/Ardour9.app` can be opened with `open`.
 - The LV2 core/spec bundles, `Harrison.lv2`, `gmsynth.lv2`, bundled media,
-  `harvid` video tools, cursor icon sets, and GTK clearlooks engine that were
-  previously missing are now included.
+  `harvid` video tools, cursor icon sets, GTK clearlooks engine, and the
+  missing `glib20.mo` / `gettext-runtime.mo` / `gettext-tools.mo` catalogs that
+  were previously absent are now included.
 
 ## Repository layout
 
@@ -99,6 +100,9 @@ It does the following:
 - Flattens `lib/ardour9` into `Contents/lib` so the app layout is closer to the
   official macOS bundle.
 - Copies `share/ardour9` and `etc/ardour9` into `Contents/Resources`.
+- Rebuilds the locale tree inside `Contents/Resources` so the app can carry the
+  Ardour-generated catalogs plus the extra `glib` and `gettext` catalogs used
+  by the official bundle.
 - Adds macOS packaging assets from `tools/osx_packaging` in the Ardour source:
   - `Info.plist.in`
   - `InfoPlist.strings.in`
@@ -385,6 +389,35 @@ tree during `ardour-base`, then materializing
 `Contents/lib/gtkengines/engines/libclearlooks.so` during `ardour-app` with
 rewritten Mach-O paths for the final app layout.
 
+### 8. GTK/Gettext locale catalogs
+
+This is partly a packaging-time implicit dependency and partly a stack-version
+difference.
+
+Evidence in the official packaging script:
+
+- `tools/osx_packaging/osx_build` first copies Ardour's own `.mo` files from
+  the repo/build tree
+- then it additionally copies locale directories from
+  `$GTKSTACK_ROOT/share/locale`
+
+In practice, the official app contains extra catalogs such as:
+
+- `glib20.mo`
+- `gettext-runtime.mo`
+- `gettext-tools.mo`
+
+Those catalogs do not come from the Ardour repo itself. They come from the
+external GTK/Gettext stack used during packaging.
+
+In the flake, this is reproduced by adding the matching catalogs from nixpkgs
+`glib` and `gettext` during `ardour-app`. This intentionally does not rename
+`gtkmm2ext3.mo` to `gtkmm2ext9.mo`.
+
+That rename exists in the upstream packaging script, but both the source tree
+and the built `libgtkmm2ext.dylib` still use the `gtkmm2ext3` translation
+domain, so the rename is not currently treated as a runtime requirement.
+
 ## Why some official differences remain
 
 The current output is much closer to the official bundle than the initial
@@ -394,9 +427,11 @@ Remaining known differences:
 
 - no code signing or notarization
 - `vamp` naming still differs from the comparison bundle
-- extra GTK/Gettext locale catalogs such as `gettext-runtime.mo`,
-  `gettext-tools.mo`, `glib20.mo`, and some `gtkmm2ext9.mo` files are still
-  missing
+- the added `glib20.mo` / `gettext-runtime.mo` / `gettext-tools.mo` catalogs
+  come from current nixpkgs `glib` and `gettext`, so they differ in content
+  from the older catalogs inside the comparison bundle
+- `gtkmm2ext3.mo` is kept under its build-time domain name instead of being
+  renamed to `gtkmm2ext9.mo` like the official packaging script does
 - the app uses a partially officialized layout:
   - `Contents/lib` is flattened like the official bundle
   - but some packaging details such as `bundled/` and extra helper remnants are
@@ -500,8 +535,6 @@ Important parts of the result are:
 The next likely steps are:
 
 - decide whether to normalize `vamp` dylib names to match the official bundle
-- add the remaining locale assets that are still only present in the official
-  bundle
 - decide whether to flatten the remaining `bundled/` and helper layout
   differences inside `Contents/lib`
 - add signing/notarization outside of the Nix build if release-grade macOS
