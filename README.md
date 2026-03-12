@@ -1,68 +1,348 @@
-# Ardour for macOS (arm64)
+# Ardour 9.2 for macOS arm64 with Nix
 
-This repository provides a Nix flake to build Ardour 9.2 for macOS on arm64 processors.
+This repository contains a Nix flake that builds Ardour 9.2 on macOS arm64 and
+then repackages the install tree into a relocatable Nix output.
 
-## Requirements
+The flake started as a straightforward nixpkgs-based build, but several rounds
+of comparison against the official macOS bundle showed that Ardour's packaging
+scripts rely on implicit external inputs. The current recipe makes those inputs
+explicit where they matter for runtime behavior and bundle parity.
 
-*   [Nix](https://nixos.org/download.html)
+## Current status
+
+- `nix build` succeeds on macOS arm64.
+- The resulting `result/bin/ardour9` launches successfully.
+- The output is a relocatable Nix install tree, not a `.app` bundle.
+- The LV2 core/spec bundles and bundled media that were previously missing are
+  now included.
+
+## Repository layout
+
+- `flake.nix`
+  Main build and packaging recipe.
+- `ardour-lv2-stack.nix`
+  Custom recipes for the Ardour-pinned LV2 stack.
+- `libwebsockets.nix`
+  Custom recipe for the Ardour-pinned `libwebsockets`.
+- `vamp.nix`
+  Custom recipe for the Ardour-pinned `vamp-plugin-sdk`.
+- `aubio.nix`
+  Custom aubio recipe kept from earlier work.
+- `arm64-fix.patch`
+  Patch applied to the Ardour source tree.
+
+## How the flake is structured
+
+The flake builds Ardour in two stages.
+
+### 1. `ardour-base`
+
+`ardour-base` is a normal `stdenv.mkDerivation` that builds Ardour itself.
+
+It does the following:
+
+- Fetches `Ardour/ardour` at tag `9.2` with submodules.
+- Applies `arm64-fix.patch`.
+- Injects a static `revision.cc` so the build does not depend on Git metadata.
+- Rewrites `wscript` so version and revision date detection do not try to query
+  tarball or Git state at build time.
+- Runs:
+  - `python3 ./waf configure`
+  - `python3 ./waf`
+  - `python3 ./waf i18n`
+  - `python3 ./waf install`
+
+Important details:
+
+- `python3 ./waf i18n` is required because some translation catalogs are
+  generated during the build and are not already present in the repo.
+- `NIX_CFLAGS_COMPILE` is extended with `pkg-config --cflags sratom-0` because
+  Ardour's configure logic was otherwise not reliably finding the required
+  headers in the Nix environment.
+- `CFLAGS` and `CXXFLAGS` add `-DDISABLE_VISIBILITY`, which is needed on macOS
+  for this build.
+
+### 2. `ardour-package`
+
+`ardour-package` is a `stdenvNoCC.mkDerivation` that repackages the installed
+  tree from `ardour-base`.
+
+It does the following:
+
+- Copies the full install tree from `ardour-base` into `$out`.
+- Traverses Mach-O files under `lib/ardour9`.
+- Uses `otool -L` to find `/nix/store` runtime dependencies.
+- Copies those dependencies into `lib/ardour9/bundled`.
+- Rewrites Mach-O install names to use `@loader_path`-relative references.
+- Rewrites the Ardour shell wrappers so they compute `_ardour_root` from the
+  installed path instead of hard-coding the original store path.
+- Adds extra non-repo resources that the official bundle expects:
+  - Ardour bundled media zip
+  - LV2 spec/core TTL bundles
+
+This second stage exists because `waf install` alone does not produce a
+standalone macOS bundle or a self-contained Nix-style runtime tree.
+
+## Dependency selection
+
+The current flake uses a mixed strategy.
+
+### Dependencies kept from nixpkgs
+
+The following are still taken from nixpkgs because there was no evidence that
+Ardour-specific patched variants were required for successful build and launch:
+
+- `boost`
+- `glib`
+- `glibmm`
+- `libsndfile`
+- `libarchive`
+- `liblo`
+- `taglib`
+- `rubberband`
+- `jack2`
+- `fftwFloat`
+- `libpng`
+- `pango`
+- `cairomm`
+- `pangomm`
+- `libxml2`
+- `cppunit`
+- `lrdf`
+- `libsamplerate`
+- `libogg`
+- `flac`
+- `fontconfig`
+- `freetype`
+- `readline`
+
+This was not chosen arbitrarily. The official dependency documentation and
+`patch-info` were checked, and the remaining nixpkgs versions do not currently
+show a blocker that would explain build or launch failure on macOS arm64.
+
+### Dependencies pinned to Ardour-provided sources
+
+The following are intentionally overridden because bundle comparisons and the
+official packaging scripts showed that nixpkgs versions caused meaningful
+runtime or layout drift:
+
+- `lv2`
+- `serd`
+- `sord`
+- `sratom`
+- `lilv`
+- `libwebsockets`
+- `vamp-plugin-sdk`
+
+#### Why the LV2 stack is custom
+
+This was the most important divergence.
+
+The official Ardour build stack does not use the same LV2 stack as current
+nixpkgs. Ardour ships its own tarballs for:
+
+- `lv2`
+- `serd`
+- `sord`
+- `sratom`
+- `lilv`
+
+The custom recipe in `ardour-lv2-stack.nix` builds those exact sources with
+their historical Waf build system. This matters because the difference is not
+just cosmetic.
+
+Example:
+
+- nixpkgs `lv2` provided `schemas.lv2/dcterms.ttl`
+- the official Ardour stack provides `schemas.lv2/dct.ttl` and `dcs.ttl`
+
+The official macOS bundle contained `dct.ttl` and `dcs.ttl`, so using current
+nixpkgs `lv2` left the bundle structurally different. The custom LV2 stack
+removes that mismatch.
+
+#### Why `libwebsockets` is custom
+
+Current nixpkgs provided a newer soname than the official bundle. The Ardour
+stack expects the older `4.3.0-14` branch, which installs `libwebsockets.19`.
+
+The Ardour tarball is old enough to require:
+
+- `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`
+
+with current CMake. That compatibility flag is baked into `libwebsockets.nix`.
+
+#### Why `vamp` is custom
+
+The official bundle and the current Ardour dependency documentation do not line
+up cleanly with current nixpkgs naming. The flake therefore uses the
+Ardour-hosted `vamp-plugin-sdk` tarball instead of the GitHub release.
+
+There is still a remaining naming mismatch versus the specific official
+`Ardour9.app` used for comparison:
+
+- current flake output bundles:
+  - `libvamp-sdk-dynamic.2.9.0.dylib`
+  - `libvamp-hostsdk.3.9.0.dylib`
+- comparison bundle uses:
+  - `libvamp-sdk.2.dylib`
+  - `libvamp-hostsdk.2.dylib`
+
+This is a known remaining difference. It does not currently block launch.
+
+## Implicit dependencies made explicit
+
+The most important outcome of the investigation was that Ardour's official
+packaging is not repo-only. The flake now codifies the most relevant implicit
+dependencies.
+
+### 1. LV2 spec/core bundles
+
+Evidence in the official packaging script:
+
+- `tools/osx_packaging/osx_build` copies `build/libs/LV2`
+- then it additionally copies `*.ttl` from `$GTKSTACK_ROOT/lib/lv2/*.lv2`
+
+This means the official bundle expects external LV2 spec bundles that are not
+produced by Ardour itself.
+
+In the flake, this is reproduced by:
+
+- building the Ardour-pinned `lv2` package
+- copying its `lib/lv2/*.lv2/*.ttl` into `lib/ardour9/LV2`
+
+Without this step, the output was missing `schemas.lv2` and other core LV2
+metadata that the official bundle contained.
+
+### 2. Bundled media
+
+This was the other major hidden input.
+
+Evidence in the official packaging script:
+
+- first it copies `share/media` from the Ardour source tree
+- later it downloads `http://stuff.ardour.org/loops/ArdourBundledMedia.zip`
+- then it extracts that zip into the same media directory
+
+The repo itself only contains:
+
+- `.daw-meta.xml`
+- `click.mid`
+- `click-120bpm.flac`
+
+The huge `MIDI Beats`, `MIDI Chords`, and `MIDI Progressions` trees come from
+that external zip, not from the repository.
+
+The flake now pins:
+
+- `http://stuff.ardour.org/loops/ArdourBundledMedia.zip`
+- hash: `sha256-oA3gBnHNwymyyjXCpcQVCvPWWIFH+dyi496nUqouI0w=`
+
+and extracts it during `ardour-package`.
+
+This makes the media dependency explicit and reproducible.
+
+## Why some official differences remain
+
+The current output is much closer to the official bundle than the initial
+nixpkgs-only build, but it is not identical.
+
+Remaining known differences:
+
+- no `.app` bundle is produced yet
+- no code signing or notarization
+- `vamp` naming still differs from the comparison bundle
+- external optional content such as `harvid`, `Harrison.lv2`, and similar
+  packaging additions are still not reproduced
+
+These were intentionally deferred because they are less critical than:
+
+- building successfully
+- launching successfully
+- fixing the missing LV2 metadata
+- fixing the missing bundled media
+
+## Trial-and-error history summarized
+
+The current flake is the result of several failed or incomplete approaches.
+
+### Initial approach
+
+The original idea was to build Ardour only against nixpkgs dependencies and rely
+on `waf install`.
+
+This was insufficient because:
+
+- the result was not self-contained
+- many runtime dependencies still pointed at `/nix/store`
+- bundle layout diverged strongly from the official macOS package
+
+### First packaging pass
+
+A second step was added to:
+
+- crawl Mach-O dependencies
+- copy store libraries into `bundled`
+- rewrite install names
+
+This made the output runnable, but did not solve missing resource trees.
+
+### LV2 investigation
+
+Comparison against the official app showed missing LV2 schema files. This led to
+inspection of `tools/osx_packaging/osx_build`, which revealed that the official
+bundle copied LV2 TTL files from an external stack rather than the repo.
+
+That in turn led to:
+
+- identifying the LV2 stack version mismatch
+- replacing nixpkgs LV2-related dependencies with Ardour-hosted sources
+
+### Media investigation
+
+Comparison against the official app also showed an enormous media difference.
+That led to the discovery that:
+
+- the repo has only the click files
+- the real content is pulled from `ArdourBundledMedia.zip`
+
+This is now also encoded in the flake.
 
 ## Usage
 
-### Building
-
-To build Ardour, run the following command in the root of this repository:
+### Build
 
 ```bash
 nix build
 ```
 
-The resulting application bundle (`Ardour9.app`) will be in the `result/Applications/` directory.
-
-### Development Shell
-
-To enter a development shell with all the necessary dependencies, run:
+### Development shell
 
 ```bash
 nix develop
 ```
 
-## Dependencies
+## Result layout
 
-This flake pulls in all the necessary dependencies to build Ardour, including:
+Important parts of the result are:
 
-*   aubio
-*   boost
-*   cairomm
-*   cppunit
-*   curl
-*   fftwFloat
-*   flac
-*   fontconfig
-*   freetype
-*   glib
-*   glibmm
-*   jack2
-*   libarchive
-*   liblo
-*   libogg
-*   libpng
-*   libsamplerate
-*   libsndfile
-*   libusb1
-*   libwebsockets
-*   libxml2
-*   lilv
-*   lrdf
-*   lv2
-*   pango
-*   pangomm
-*   rubberband
-*   serd
-*   sord
-*   sratom
-*   taglib
-*   vamp-plugin-sdk
+- `result/bin/ardour9`
+  Launcher wrapper.
+- `result/lib/ardour9`
+  Main libraries, scanners, plugins, and helper binaries.
+- `result/lib/ardour9/bundled`
+  Copied runtime dylibs from `/nix/store`.
+- `result/lib/ardour9/LV2`
+  Ardour LV2 plugins plus the external LV2 spec/core TTL bundles.
+- `result/share/ardour9/media`
+  Repo media plus `ArdourBundledMedia.zip` content.
 
-## Patch
+## If you want to go further
 
-The `arm64-fix.patch` file modifies the build script to avoid using SSE instructions on arm64, which are specific to x86 processors.
+The next likely steps are:
+
+- generate a proper `Ardour9.app`
+- decide whether to normalize `vamp` dylib names to match the official bundle
+- decide whether `harvid`, `Harrison.lv2`, and other external packaging
+  additions should be reproduced
+- add signing/notarization outside of the Nix build if release-grade macOS
+  distribution is required
