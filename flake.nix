@@ -20,6 +20,10 @@
         # for macos, we need to use the custom versions of aubio and vamp plugins
         aubio-custom = pkgs.callPackage ./aubio.nix { };
         ardourLv2Stack = pkgs.callPackage ./ardour-lv2-stack.nix { };
+        ardourBundledMedia = pkgs.fetchurl {
+          url = "http://stuff.ardour.org/loops/ArdourBundledMedia.zip";
+          hash = "sha256-oA3gBnHNwymyyjXCpcQVCvPWWIFH+dyi496nUqouI0w=";
+        };
         libwebsocketsCustom = pkgs.callPackage ./libwebsockets.nix { };
         vamp-custom = pkgs.callPackage ./vamp.nix { };
         curl-custom = pkgs.curlMinimal;
@@ -152,6 +156,7 @@
             ]
             ++ [
               pkgs.python311
+              pkgs.unzip
             ];
 
           installPhase = ''
@@ -282,6 +287,10 @@ PY
                 done < <(find "$ardourLib" -type f \( -perm -111 -o -name "*.dylib" \) -print0)
               fi
             ''}
+
+            if [ -d "$out/share/ardour9/media" ]; then
+              unzip -oq ${ardourBundledMedia} -d "$out/share/ardour9/media"
+            fi
 
             if [ -d "$out/lib/ardour9/LV2" ]; then
               while IFS= read -r -d "" ttl; do
