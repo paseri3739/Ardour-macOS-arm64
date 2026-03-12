@@ -19,6 +19,8 @@
 
         # for macos, we need to use the custom versions of aubio and vamp plugins
         aubio-custom = pkgs.callPackage ./aubio.nix { };
+        ardourLv2Stack = pkgs.callPackage ./ardour-lv2-stack.nix { };
+        libwebsocketsCustom = pkgs.callPackage ./libwebsockets.nix { };
         vamp-custom = pkgs.callPackage ./vamp.nix { };
         curl-custom = pkgs.curlMinimal;
 
@@ -42,16 +44,16 @@
             pango
             cairomm
             pangomm
-            lv2
+            ardourLv2Stack.lv2
             libxml2
             cppunit
-            libwebsockets
+            libwebsocketsCustom
             lrdf
             libsamplerate
-            serd
-            sord
-            sratom
-            lilv
+            ardourLv2Stack.serd
+            ardourLv2Stack.sord
+            ardourLv2Stack.sratom
+            ardourLv2Stack.lilv
             libogg
             flac
             fontconfig
@@ -280,6 +282,15 @@ PY
                 done < <(find "$ardourLib" -type f \( -perm -111 -o -name "*.dylib" \) -print0)
               fi
             ''}
+
+            if [ -d "$out/lib/ardour9/LV2" ]; then
+              while IFS= read -r -d "" ttl; do
+                bundleName="$(basename "$(dirname "$ttl")")"
+                installDir="$out/lib/ardour9/LV2/$bundleName"
+                mkdir -p "$installDir"
+                cp "$ttl" "$installDir/"
+              done < <(find ${ardourLv2Stack.lv2}/lib/lv2 -mindepth 2 -maxdepth 2 -type f -name "*.ttl" -print0)
+            fi
 
             for script in \
               "$out/bin/ardour9" \

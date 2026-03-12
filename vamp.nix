@@ -1,7 +1,7 @@
 {
   lib,
   stdenv,
-  fetchFromGitHub,
+  fetchurl,
   pkg-config,
   libsndfile,
   # install_name_tool を使用するために必要
@@ -10,13 +10,11 @@
 
 stdenv.mkDerivation rec {
   pname = "vamp-plugin-sdk";
-  version = "2.10";
+  version = "2.9.0";
 
-  src = fetchFromGitHub {
-    owner = "vamp-plugins";
-    repo = "vamp-plugin-sdk";
-    rev = "vamp-plugin-sdk-v${version}";
-    hash = "sha256-5jNA6WmeIOVjkEMZXB5ijxyfJT88alVndBif6dnUFdI=";
+  src = fetchurl {
+    url = "https://ardour.org/files/deps/vamp-plugin-sdk-${version}.tar.gz";
+    hash = "sha256-typ474/4qSfcLtfmbs9MYtIyaKXXTQLaJb4rjQA0EJk=";
   };
 
   nativeBuildInputs = [ pkg-config ] ++ lib.optional stdenv.isDarwin fixDarwinDylibNames;
