@@ -50,6 +50,14 @@
             }
           else
             null;
+        gmsynthBundle =
+          if system == "aarch64-darwin" then
+            pkgs.fetchurl {
+              url = "https://x42-plugins.com/x42/mac/x42-gmsynth-lv2-macOS-v0.6.4.zip";
+              hash = "sha256-vgS2QKrTu+eJpeGGV/3bTohmhBInANFr0wN45AkxMRo=";
+            }
+          else
+            null;
         libwebsocketsCustom = pkgs.callPackage ./libwebsockets.nix { };
         vamp-custom = pkgs.callPackage ./vamp.nix { };
         curl-custom = pkgs.curlMinimal;
@@ -160,6 +168,16 @@
             # Wafによる標準的なインストールを実行
             # これにより $out/bin, $out/lib, $out/share 配下に成果物が配置されます
             python3 ./waf install
+
+            ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+              if [ -f build/libs/clearlooks-newer/libclearlooks.dylib ]; then
+                mkdir -p "$out/lib/ardour9/gtkengines/engines"
+                cp build/libs/clearlooks-newer/libclearlooks.dylib \
+                  "$out/lib/ardour9/gtkengines/libclearlooks.dylib"
+                ln -sf ../libclearlooks.dylib \
+                  "$out/lib/ardour9/gtkengines/engines/libclearlooks.so"
+              fi
+            ''}
             runHook postInstall
           '';
         };
@@ -327,6 +345,12 @@ PY
               fi
             ''}
 
+            ${pkgs.lib.optionalString (gmsynthBundle != null) ''
+              if [ -d "$out/lib/ardour9/LV2" ]; then
+                unzip -oq ${gmsynthBundle} -d "$out/lib/ardour9/LV2"
+              fi
+            ''}
+
             ${pkgs.lib.optionalString (harvidBundle != null) ''
               tmpHarvid="$TMPDIR/harvid"
               mkdir -p "$tmpHarvid"
@@ -438,6 +462,27 @@ PY
 
             cp -a ${ardour-package}/lib/ardour9/. "$libDir/"
             chmod -R u+w "$libDir"
+
+            if [ -f "$libDir/gtkengines/libclearlooks.dylib" ]; then
+              mkdir -p "$libDir/gtkengines/engines"
+              rm -f "$libDir/gtkengines/engines/libclearlooks.so"
+              cp "$libDir/gtkengines/libclearlooks.dylib" "$libDir/gtkengines/engines/libclearlooks.so"
+              chmod u+w "$libDir/gtkengines/engines/libclearlooks.so"
+              install_name_tool -id "@loader_path/libclearlooks.so" "$libDir/gtkengines/engines/libclearlooks.so"
+              install_name_tool -change "@loader_path/../libytk.dylib" "@loader_path/../../libytk.dylib" "$libDir/gtkengines/engines/libclearlooks.so"
+              install_name_tool -change "@loader_path/../libydk.dylib" "@loader_path/../../libydk.dylib" "$libDir/gtkengines/engines/libclearlooks.so"
+              install_name_tool -change "@loader_path/../libztk.dylib" "@loader_path/../../libztk.dylib" "$libDir/gtkengines/engines/libclearlooks.so"
+              install_name_tool -change "@loader_path/../libydk-pixbuf.dylib" "@loader_path/../../libydk-pixbuf.dylib" "$libDir/gtkengines/engines/libclearlooks.so"
+              install_name_tool -change "@loader_path/../bundled/libcairo.2.dylib" "@loader_path/../../bundled/libcairo.2.dylib" "$libDir/gtkengines/engines/libclearlooks.so"
+              install_name_tool -change "@loader_path/../bundled/libpango-1.0.0.dylib" "@loader_path/../../bundled/libpango-1.0.0.dylib" "$libDir/gtkengines/engines/libclearlooks.so"
+              install_name_tool -change "@loader_path/../bundled/libgobject-2.0.0.dylib" "@loader_path/../../bundled/libgobject-2.0.0.dylib" "$libDir/gtkengines/engines/libclearlooks.so"
+              install_name_tool -change "@loader_path/../bundled/libglib-2.0.0.dylib" "@loader_path/../../bundled/libglib-2.0.0.dylib" "$libDir/gtkengines/engines/libclearlooks.so"
+              install_name_tool -change "@loader_path/../bundled/libharfbuzz.0.dylib" "@loader_path/../../bundled/libharfbuzz.0.dylib" "$libDir/gtkengines/engines/libclearlooks.so"
+              install_name_tool -change "@loader_path/../bundled/libintl.8.dylib" "@loader_path/../../bundled/libintl.8.dylib" "$libDir/gtkengines/engines/libclearlooks.so"
+              rm -f "$libDir/gtkengines/libclearlooks.dylib"
+            fi
+
+            rm -rf "$libDir/engines"
 
             if [ -d "$libDir/video-tools" ]; then
               cp -a "$libDir/video-tools/." "$macosDir/"

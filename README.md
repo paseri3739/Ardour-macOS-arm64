@@ -14,9 +14,9 @@ explicit where they matter for runtime behavior and bundle parity.
 - `nix build` succeeds on macOS arm64.
 - The resulting `result/bin/ardour9` launches successfully.
 - The resulting `result/Ardour9.app` can be opened with `open`.
-- The LV2 core/spec bundles, `Harrison.lv2`, bundled media, `harvid`
-  video tools, and cursor icon sets that were previously missing are now
-  included.
+- The LV2 core/spec bundles, `Harrison.lv2`, `gmsynth.lv2`, bundled media,
+  `harvid` video tools, cursor icon sets, and GTK clearlooks engine that were
+  previously missing are now included.
 
 ## Repository layout
 
@@ -82,6 +82,7 @@ It does the following:
   - Ardour bundled media zip
   - LV2 spec/core TTL bundles
   - Harrison XT LV2 bundle
+  - x42 General MIDI synth LV2 bundle
   - harvid video-tool bundle
 
 This second stage exists because `waf install` alone does not produce a
@@ -106,6 +107,9 @@ It does the following:
   - `typeArdour.icns`
 - Copies `gtk2_ardour/icons/cursor_square` and `gtk2_ardour/icons/cursor_z`
   into `Contents/Resources/icons`, matching upstream packaging behavior.
+- Materializes `Contents/lib/gtkengines/engines/libclearlooks.so` from the
+  Ardour-built clearlooks engine and rewrites its Mach-O references for the app
+  layout.
 - Copies the Ardour GUI binary into `Contents/MacOS/Ardour9`.
 - Rewrites the copied executable so its Mach-O references point at
   `@executable_path/../lib/...`, matching app-bundle layout.
@@ -345,6 +349,42 @@ present and reads the hotspot metadata from inside them. This means
 In the flake, this is reproduced by copying those directories directly from the
 Ardour source tree into `Contents/Resources/icons` during `ardour-app`.
 
+### 6. `gmsynth.lv2`
+
+This is another external packaging dependency.
+
+Evidence in the official packaging script:
+
+- `tools/osx_packaging/osx_build` enables `WITH_GMSYNTH`
+- then it downloads `x42-gmsynth-lv2-macOS-<version>.zip`
+- then it extracts the bundle into `Contents/lib/LV2`
+
+The Ardour repo references this plugin as the General MIDI fallback synth, but
+it does not build `gmsynth.lv2` itself.
+
+In the flake, this is reproduced by pinning the x42 macOS LV2 archive and
+extracting it during `ardour-package`.
+
+### 7. Clearlooks GTK engine
+
+This one is not an external download, but it is also not reproduced correctly
+by `waf install` alone.
+
+Evidence in the official packaging script:
+
+- `tools/osx_packaging/osx_build` copies
+  `build/libs/clearlooks-newer/libclearlooks.dylib`
+- and installs it as `Contents/lib/gtkengines/engines/libclearlooks.so`
+
+The Ardour source tree contains `libs/clearlooks-newer`, and the build does
+produce the engine, but it needs bundle-specific placement to match the GTK
+runtime expectations inside the app.
+
+In the flake, this is reproduced by copying the built engine out of the build
+tree during `ardour-base`, then materializing
+`Contents/lib/gtkengines/engines/libclearlooks.so` during `ardour-app` with
+rewritten Mach-O paths for the final app layout.
+
 ## Why some official differences remain
 
 The current output is much closer to the official bundle than the initial
@@ -368,6 +408,7 @@ These were intentionally deferred because they are less critical than:
 - launching successfully
 - fixing the missing LV2 metadata
 - fixing the missing bundled media
+- fixing the missing bundled plugins and GTK engine
 
 ## Trial-and-error history summarized
 
