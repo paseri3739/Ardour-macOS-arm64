@@ -9,6 +9,13 @@ of comparison against the official macOS bundle showed that Ardour's packaging
 scripts rely on implicit external inputs. The current recipe makes those inputs
 explicit where they matter for runtime behavior and bundle parity.
 
+## Intended use
+
+This repository is intended to provide developers with a reproducible
+dependency-resolution and verification environment. It is not intended to
+distribute finished artifacts, and if you build artifacts from this repository,
+please do not redistribute them.
+
 ## Current status
 
 - `nix build` succeeds on macOS arm64.
