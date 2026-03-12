@@ -454,6 +454,10 @@ PY
             done < <(find ${ardour-package}/etc/ardour9 -mindepth 1 -maxdepth 1 -print0)
             chmod -R u+w "$resourcesDir"
 
+            mkdir -p "$resourcesDir/icons"
+            cp -a ${ardourSource}/gtk2_ardour/icons/cursor_square "$resourcesDir/icons/"
+            cp -a ${ardourSource}/gtk2_ardour/icons/cursor_z "$resourcesDir/icons/"
+
             cp ${ardourSource}/tools/osx_packaging/Resources/fonts.conf "$resourcesDir/fonts.conf"
             cp ${ardourSource}/tools/osx_packaging/Ardour.icns "$resourcesDir/appIcon.icns"
             cp ${ardourSource}/tools/osx_packaging/typeArdour.icns "$resourcesDir/typeArdour.icns"

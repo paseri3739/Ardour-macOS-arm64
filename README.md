@@ -14,8 +14,9 @@ explicit where they matter for runtime behavior and bundle parity.
 - `nix build` succeeds on macOS arm64.
 - The resulting `result/bin/ardour9` launches successfully.
 - The resulting `result/Ardour9.app` can be opened with `open`.
-- The LV2 core/spec bundles, `Harrison.lv2`, bundled media, and `harvid`
-  video tools that were previously missing are now included.
+- The LV2 core/spec bundles, `Harrison.lv2`, bundled media, `harvid`
+  video tools, and cursor icon sets that were previously missing are now
+  included.
 
 ## Repository layout
 
@@ -103,6 +104,8 @@ It does the following:
   - `Resources/fonts.conf`
   - `Ardour.icns`
   - `typeArdour.icns`
+- Copies `gtk2_ardour/icons/cursor_square` and `gtk2_ardour/icons/cursor_z`
+  into `Contents/Resources/icons`, matching upstream packaging behavior.
 - Copies the Ardour GUI binary into `Contents/MacOS/Ardour9`.
 - Rewrites the copied executable so its Mach-O references point at
   `@executable_path/../lib/...`, matching app-bundle layout.
@@ -321,6 +324,27 @@ support, but it does not build those binaries itself.
 In the flake, this is reproduced by pinning the matching `harvid` archive,
 staging it in `ardour-package`, and carrying it into `Ardour9.app`.
 
+### 5. Cursor icon sets
+
+This one is not an external download, but it is still a packaging-time implicit
+dependency.
+
+Evidence in the official packaging script:
+
+- `tools/osx_packaging/osx_build` copies `../../gtk2_ardour/icons/cursor_*`
+  into `Contents/Resources/icons`
+
+The important detail is that `waf install` does not install the full cursor set.
+In `gtk2_ardour/wscript`, the cursor PNG install is commented out and only the
+`icons/cursor_square/hotspots` file is installed.
+
+At runtime, Ardour's cursor loader expects the cursor-set subdirectories to be
+present and reads the hotspot metadata from inside them. This means
+`cursor_square` and `cursor_z` are real runtime resources, not cosmetic extras.
+
+In the flake, this is reproduced by copying those directories directly from the
+Ardour source tree into `Contents/Resources/icons` during `ardour-app`.
+
 ## Why some official differences remain
 
 The current output is much closer to the official bundle than the initial
@@ -330,8 +354,6 @@ Remaining known differences:
 
 - no code signing or notarization
 - `vamp` naming still differs from the comparison bundle
-- cursor icon assets from `icons/cursor_square` and `icons/cursor_z` are still
-  missing
 - extra GTK/Gettext locale catalogs such as `gettext-runtime.mo`,
   `gettext-tools.mo`, `glib20.mo`, and some `gtkmm2ext9.mo` files are still
   missing
@@ -437,8 +459,8 @@ Important parts of the result are:
 The next likely steps are:
 
 - decide whether to normalize `vamp` dylib names to match the official bundle
-- add the remaining cursor/icon and locale assets that are still only present
-  in the official bundle
+- add the remaining locale assets that are still only present in the official
+  bundle
 - decide whether to flatten the remaining `bundled/` and helper layout
   differences inside `Contents/lib`
 - add signing/notarization outside of the Nix build if release-grade macOS
