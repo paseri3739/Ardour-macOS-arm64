@@ -1,5 +1,7 @@
 # Ardour 9.2 for macOS arm64 with Nix
 
+Japanese version: [README.ja.md](README.ja.md)
+
 This repository contains a Nix flake that builds Ardour 9.2 on macOS arm64,
 repackages the install tree into a relocatable Nix runtime, and then assembles
 an `Ardour9.app` bundle from that staged output.
