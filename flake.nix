@@ -512,12 +512,34 @@ EOF
             runHook postInstall
           '';
         };
+
+        export-app = pkgs.writeShellApplication {
+          name = "export-ardour-app";
+          text = ''
+            set -eu
+
+            dest="''${1:-./dist/${bundleName}.app}"
+            mkdir -p "$(dirname "$dest")"
+            rm -rf "$dest"
+            cp -R ${ardour-app}/${bundleName}.app "$dest"
+            chmod -R u+w "$dest"
+            find "$dest" -exec touch -h {} +
+
+            printf 'exported %s\n' "$dest"
+          '';
+        };
       in
       {
         packages.default = ardour-app;
         packages.app = ardour-app;
         packages.tree = ardour-package;
         packages.base = ardour-base;
+        packages.export-app = export-app;
+
+        apps.export-app = {
+          type = "app";
+          program = "${export-app}/bin/export-ardour-app";
+        };
 
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
