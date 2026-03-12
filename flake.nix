@@ -42,6 +42,14 @@
             }
           else
             null;
+        harvidBundle =
+          if system == "aarch64-darwin" then
+            pkgs.fetchurl {
+              url = "http://ardour.org/files/video-tools/harvid-macOS-arm64-v0.9.1.tgz";
+              hash = "sha256-QpcPSAy9C47cbNRePJ+V4X3xnrR5RoBoyNaSoc20nQM=";
+            }
+          else
+            null;
         libwebsocketsCustom = pkgs.callPackage ./libwebsockets.nix { };
         vamp-custom = pkgs.callPackage ./vamp.nix { };
         curl-custom = pkgs.curlMinimal;
@@ -319,6 +327,24 @@ PY
               fi
             ''}
 
+            ${pkgs.lib.optionalString (harvidBundle != null) ''
+              tmpHarvid="$TMPDIR/harvid"
+              mkdir -p "$tmpHarvid"
+              tar -xzf ${harvidBundle} -C "$tmpHarvid"
+
+              if [ -d "$tmpHarvid/lib/harvid" ]; then
+                mkdir -p "$out/lib/ardour9/harvid"
+                cp -a "$tmpHarvid/lib/harvid/." "$out/lib/ardour9/harvid/"
+                chmod -R u+w "$out/lib/ardour9/harvid"
+              fi
+
+              if [ -d "$tmpHarvid/MacOS" ]; then
+                mkdir -p "$out/lib/ardour9/video-tools"
+                cp -a "$tmpHarvid/MacOS/." "$out/lib/ardour9/video-tools/"
+                chmod -R u+w "$out/lib/ardour9/video-tools"
+              fi
+            ''}
+
             for script in \
               "$out/bin/ardour9" \
               "$out/bin/ardour9-lua" \
@@ -353,6 +379,7 @@ PY
                 printf '%s\n' '#!/bin/sh'
                 printf '%s\n' '_script_dir="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"'
                 printf '%s\n' '_ardour_root="$(CDPATH= cd -- "$_script_dir/.." && pwd)"'
+                printf '%s\n' 'export PATH=$_ardour_root/lib/ardour9/video-tools''${PATH:+:$PATH}'
                 sed '1d' "$script"
               } > "$tmp"
               mv "$tmp" "$script"
@@ -365,6 +392,7 @@ PY
                 printf '%s\n' '#!/bin/sh'
                 printf '%s\n' '_script_dir="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"'
                 printf '%s\n' '_ardour_root="$(CDPATH= cd -- "$_script_dir/../../.." && pwd)"'
+                printf '%s\n' 'export PATH=$_ardour_root/lib/ardour9/video-tools''${PATH:+:$PATH}'
                 sed '1d' "$out/lib/ardour9/utils/ardour-util.sh"
               } > "$tmp"
               mv "$tmp" "$out/lib/ardour9/utils/ardour-util.sh"
@@ -410,6 +438,12 @@ PY
 
             cp -a ${ardour-package}/lib/ardour9/. "$libDir/"
             chmod -R u+w "$libDir"
+
+            if [ -d "$libDir/video-tools" ]; then
+              cp -a "$libDir/video-tools/." "$macosDir/"
+              chmod -R u+w "$macosDir"
+              rm -rf "$libDir/video-tools"
+            fi
 
             while IFS= read -r -d "" entry; do
               cp -a "$entry" "$resourcesDir/"
@@ -492,6 +526,7 @@ export ARDOUR_DATA_PATH="$BUNDLE_DIR/Resources"
 export ARDOUR_CONFIG_PATH="$BUNDLE_DIR/Resources"
 export ARDOUR_DLL_PATH="$BUNDLE_DIR/lib"
 export VAMP_PATH="$BUNDLE_DIR/lib/vamp''${VAMP_PATH:+:$VAMP_PATH}"
+export PATH="$BUNDLE_DIR/MacOS''${PATH:+:$PATH}"
 
 SELF=$(basename "$0")
 exec "$BUNDLE_DIR/lib/$SELF" "$@"

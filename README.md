@@ -14,8 +14,8 @@ explicit where they matter for runtime behavior and bundle parity.
 - `nix build` succeeds on macOS arm64.
 - The resulting `result/bin/ardour9` launches successfully.
 - The resulting `result/Ardour9.app` can be opened with `open`.
-- The LV2 core/spec bundles and bundled media that were previously missing are
-  now included.
+- The LV2 core/spec bundles, `Harrison.lv2`, bundled media, and `harvid`
+  video tools that were previously missing are now included.
 
 ## Repository layout
 
@@ -80,6 +80,8 @@ It does the following:
 - Adds extra non-repo resources that the official bundle expects:
   - Ardour bundled media zip
   - LV2 spec/core TTL bundles
+  - Harrison XT LV2 bundle
+  - harvid video-tool bundle
 
 This second stage exists because `waf install` alone does not produce a
 standalone macOS bundle or a self-contained Nix-style runtime tree.
@@ -280,6 +282,45 @@ and extracts it during `ardour-package`.
 
 This makes the media dependency explicit and reproducible.
 
+### 3. Harrison LV2 bundle
+
+This is another packaging-time dependency, not something built from the Ardour
+repo.
+
+Evidence in the official packaging script:
+
+- `tools/osx_packaging/osx_build` enables `WITH_HARRISON_LV2`
+- then it downloads `harrison_lv2s-n.<platform>.zip`
+- then it extracts that zip into `Contents/lib/LV2`
+
+The repo's `wscript` files do not build `Harrison.lv2`. They only build the
+Ardour-native LV2 bundles such as `a-comp.lv2` and `a-eq.lv2`.
+
+In the flake, this is reproduced by pinning and extracting the Harrison bundle
+for `aarch64-darwin`.
+
+### 4. harvid video tools
+
+This is also a packaging-time dependency, not something built by Ardour's own
+build graph.
+
+Evidence in the official packaging script:
+
+- `tools/osx_packaging/osx_build` enables `WITH_HARVID`
+- it reads `harvid_version.txt`
+- it downloads `harvid-macOS-arm64-<version>.tgz`
+- it extracts that archive into the app root, producing:
+  - `Contents/MacOS/harvid`
+  - `Contents/MacOS/ffmpeg_harvid`
+  - `Contents/MacOS/ffprobe_harvid`
+  - `Contents/lib/harvid/*`
+
+The Ardour source tree references `harvid` at runtime for video timeline
+support, but it does not build those binaries itself.
+
+In the flake, this is reproduced by pinning the matching `harvid` archive,
+staging it in `ardour-package`, and carrying it into `Ardour9.app`.
+
 ## Why some official differences remain
 
 The current output is much closer to the official bundle than the initial
@@ -289,8 +330,11 @@ Remaining known differences:
 
 - no code signing or notarization
 - `vamp` naming still differs from the comparison bundle
-- external optional content such as `harvid`, `Harrison.lv2`, and similar
-  packaging additions are still not reproduced
+- cursor icon assets from `icons/cursor_square` and `icons/cursor_z` are still
+  missing
+- extra GTK/Gettext locale catalogs such as `gettext-runtime.mo`,
+  `gettext-tools.mo`, `glib20.mo`, and some `gtkmm2ext9.mo` files are still
+  missing
 - the app uses a partially officialized layout:
   - `Contents/lib` is flattened like the official bundle
   - but some packaging details such as `bundled/` and extra helper remnants are
@@ -393,8 +437,8 @@ Important parts of the result are:
 The next likely steps are:
 
 - decide whether to normalize `vamp` dylib names to match the official bundle
-- decide whether `harvid`, `Harrison.lv2`, and other external packaging
-  additions should be reproduced
+- add the remaining cursor/icon and locale assets that are still only present
+  in the official bundle
 - decide whether to flatten the remaining `bundled/` and helper layout
   differences inside `Contents/lib`
 - add signing/notarization outside of the Nix build if release-grade macOS
