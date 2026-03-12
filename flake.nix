@@ -38,7 +38,7 @@
           if system == "aarch64-darwin" then
             pkgs.fetchurl {
               url = "https://builder.harrisonconsoles.com/pub/dsp/harrison_lv2s-n.macarm64.zip";
-              hash = "sha256-yukIrqQOoN/1AhwX20kHp3blTuehmGxiGT+GGOkoCC4=";
+              hash = "sha256-06L1IOXyBZsNXKV2300FG6BTSYa6DKZr3QjgxzUH1sI=";
             }
           else
             null;
@@ -213,72 +213,7 @@
                 mkdir -p "$bundledLibDir"
                 export ardourLib bundledLibDir out
 
-                python3 <<'PY'
-import os
-import shutil
-import subprocess
-from collections import deque
-
-ardour_lib = os.environ["ardourLib"]
-bundled_dir = os.environ["bundledLibDir"]
-out_root = os.environ["out"]
-
-
-def is_macho(path: str) -> bool:
-    try:
-        out = subprocess.check_output(["file", "-b", path], text=True)
-    except subprocess.CalledProcessError:
-        return False
-    return "Mach-O" in out
-
-
-def macho_deps(path: str) -> list[str]:
-    out = subprocess.check_output(["otool", "-L", path], text=True)
-    deps = []
-    for line in out.splitlines()[1:]:
-        line = line.strip()
-        if not line:
-            continue
-        deps.append(line.split(" ", 1)[0])
-    return deps
-
-
-def should_bundle(dep: str) -> bool:
-    return (
-        dep.startswith("/nix/store/")
-        and not dep.startswith(out_root + "/")
-        and not dep.startswith("/System/Library/")
-        and not dep.startswith("/usr/lib/")
-    )
-
-
-queue = deque()
-seen = set()
-
-for root, _, files in os.walk(ardour_lib):
-    for name in files:
-        path = os.path.join(root, name)
-        if is_macho(path):
-            queue.append(path)
-
-while queue:
-    path = queue.popleft()
-    if path in seen:
-        continue
-    seen.add(path)
-    if not is_macho(path):
-        continue
-
-    for dep in macho_deps(path):
-        if not should_bundle(dep):
-            continue
-
-        target = os.path.join(bundled_dir, os.path.basename(dep))
-        if not os.path.exists(target):
-            shutil.copy2(dep, target)
-            os.chmod(target, os.stat(target).st_mode | 0o200)
-            queue.append(target)
-PY
+                python3 ${./scripts/copy-tree-macho-deps.py}
 
                 while IFS= read -r -d "" macho; do
                   if ! file -b "$macho" | grep -q "Mach-O"; then
@@ -565,52 +500,9 @@ PY
 
             export appRoot resourcesDir libDir macosDir
 
-            python3 <<'PY'
-import os
-import subprocess
-from pathlib import Path
-
-
-def macho_deps(path: Path) -> list[str]:
-    out = subprocess.check_output(["otool", "-L", str(path)], text=True)
-    deps = []
-    for line in out.splitlines()[1:]:
-        line = line.strip()
-        if line:
-            deps.append(line.split(" ", 1)[0])
-    return deps
-
-
-def patch_executable(path: Path) -> None:
-    for dep in macho_deps(path):
-        if dep.startswith("@loader_path/../"):
-            new_dep = "@executable_path/../lib/" + dep[len("@loader_path/../") :]
-        elif dep.startswith("@loader_path/"):
-            new_dep = "@executable_path/../lib/" + dep[len("@loader_path/") :]
-        else:
-            continue
-        subprocess.check_call(["install_name_tool", "-change", dep, new_dep, str(path)])
-
-
-lib_dir = Path(os.environ["libDir"])
-macos_dir = Path(os.environ["macosDir"])
-
-main_executable = macos_dir / "${bundleName}"
-main_executable.write_bytes((lib_dir / "ardour-${releaseVersion}").read_bytes())
-main_executable.chmod(0o755)
-patch_executable(main_executable)
-
-for name in ("ardour9-export", "ardour9-new_session", "ardour9-new_empty_session"):
-    target = lib_dir / name
-    target.write_bytes((lib_dir / "utils" / name).read_bytes())
-    target.chmod(0o755)
-    patch_executable(target)
-
-lua_target = lib_dir / "ardour9-lua"
-lua_target.write_bytes((lib_dir / "luasession").read_bytes())
-lua_target.chmod(0o755)
-patch_executable(lua_target)
-PY
+            export releaseVersion='${releaseVersion}'
+            export bundleName='${bundleName}'
+            python3 ${./scripts/patch-app-executables.py}
 
             if [ -d "$libDir/bundled" ]; then
               cp -a "$libDir/bundled/." "$libDir/"
@@ -636,71 +528,7 @@ PY
               "$libDir/hardour-${releaseVersion}" \
               "$libDir/luasession"
 
-            python3 <<'PY'
-import os
-import subprocess
-from pathlib import Path
-
-
-def is_macho(path: Path) -> bool:
-    try:
-        subprocess.run(["otool", "-h", str(path)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except subprocess.CalledProcessError:
-        return False
-    return True
-
-
-def macho_deps(path: Path) -> list[str]:
-    out = subprocess.check_output(["otool", "-L", str(path)], text=True)
-    deps = []
-    for line in out.splitlines()[1:]:
-        line = line.strip()
-        if line:
-            deps.append(line.split(" ", 1)[0])
-    return deps
-
-
-def macho_id(path: Path) -> str | None:
-    try:
-        out = subprocess.check_output(["otool", "-D", str(path)], text=True)
-    except subprocess.CalledProcessError:
-        return None
-    lines = [line.strip() for line in out.splitlines()[1:] if line.strip()]
-    return lines[0] if lines else None
-
-
-def normalize_ref(ref: str) -> str:
-    if not (ref.startswith("@loader_path/") or ref.startswith("@executable_path/")):
-        return ref
-    for segment in ("/bundled/", "/appleutility/", "/vamp/"):
-        ref = ref.replace(segment, "/")
-    return ref
-
-
-def patch_macho(path: Path) -> None:
-    in_root_lib_dir = path.parent == lib_dir
-    macho_install_id = macho_id(path)
-    if macho_install_id:
-        new_id = normalize_ref(macho_install_id)
-        if in_root_lib_dir and new_id.startswith("@loader_path/../"):
-            new_id = "@loader_path/" + new_id[len("@loader_path/../") :]
-        if new_id != macho_install_id:
-            subprocess.check_call(["install_name_tool", "-id", new_id, str(path)])
-
-    for dep in macho_deps(path):
-        new_dep = normalize_ref(dep)
-        if in_root_lib_dir and new_dep.startswith("@loader_path/../"):
-            new_dep = "@loader_path/" + new_dep[len("@loader_path/../") :]
-        if new_dep != dep:
-            subprocess.check_call(["install_name_tool", "-change", dep, new_dep, str(path)])
-
-
-app_root = Path(os.environ["appRoot"])
-lib_dir = Path(os.environ["libDir"])
-for path in sorted(app_root.rglob("*")):
-    if path.is_file() and is_macho(path):
-        patch_macho(path)
-PY
+            python3 ${./scripts/normalize-app-macho-refs.py}
 
             cat > "$macosDir/ardour9-export" <<'EOF'
 #!/bin/sh
