@@ -99,6 +99,9 @@ It does the following:
 - Creates `Applications/Ardour9.app/Contents`.
 - Flattens `lib/ardour9` into `Contents/lib` so the app layout is closer to the
   official macOS bundle.
+- Collapses the staged `bundled/`, `appleutility/`, and `vamp/` subtrees into
+  `Contents/lib` and rewrites Mach-O references so the final layout is much
+  closer to the official bundle.
 - Copies `share/ardour9` and `etc/ardour9` into `Contents/Resources`.
 - Rebuilds the locale tree inside `Contents/Resources` so the app can carry the
   Ardour-generated catalogs plus the extra `glib` and `gettext` catalogs used
@@ -432,10 +435,8 @@ Remaining known differences:
   from the older catalogs inside the comparison bundle
 - `gtkmm2ext3.mo` is kept under its build-time domain name instead of being
   renamed to `gtkmm2ext9.mo` like the official packaging script does
-- the app uses a partially officialized layout:
-  - `Contents/lib` is flattened like the official bundle
-  - but some packaging details such as `bundled/` and extra helper remnants are
-    still carried over from the staged runtime tree
+- the app layout is much closer to the official bundle, but some library names
+  and versions still differ from the comparison bundle
 
 These were intentionally deferred because they are less critical than:
 
@@ -535,7 +536,7 @@ Important parts of the result are:
 The next likely steps are:
 
 - decide whether to normalize `vamp` dylib names to match the official bundle
-- decide whether to flatten the remaining `bundled/` and helper layout
-  differences inside `Contents/lib`
+- decide whether to normalize more library names and sonames to match the
+  comparison bundle
 - add signing/notarization outside of the Nix build if release-grade macOS
   distribution is required
